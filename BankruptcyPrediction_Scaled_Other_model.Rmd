@@ -1,0 +1,280 @@
+---
+title: "CUTe3"
+author: "Sanjyot Godbole"
+date: "February 6, 2019"
+output: 
+  html_document:
+    toc: true
+    theme: united
+    toc_depth: 4
+    toc_float:
+      collapsed: false
+      smooth_scroll: false  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Clearing the environment
+```{r ClearingEnvironment}
+rm(list = ls(all=TRUE))
+```
+
+##Loading the dataset and creating safe copies to retreive the original data in case of excessive data loss
+```{r}
+getwd()
+datadir = "C:/Work/INSOFE/Study Material/CUTe/CUTe3"
+setwd(datadir)
+
+financialData = read.csv("train.csv", header = T,sep = ",")
+dataToPredict = read.csv("test.csv", header = T,sep = ",")
+dim(financialData)
+dim(dataToPredict)
+
+```
+
+
+##Descriptive Analysis
+```{r}
+# str(financialData)
+# head(financialData)
+# tail(financialData)
+# summary(financialData)
+# names(financialData)
+# dim(financialData)
+```
+
+##Handling missing values
+**Using KNN Imputation**
+```{r}
+dim(financialData)
+sum(is.na(financialData))
+
+
+sum(is.na(financialData$Attr37))
+#As Attr37 has 13768 NA values, removing it
+financialData$Attr37 = NULL
+
+#Checking the number of missing values left
+sum(is.na(financialData))
+
+# #Checking feature-wise missing values 
+# for (feature in names(financialData)) {
+#     missing <- sum(is.na(financialData[,feature]))
+#     if (missing > 0) {
+#         print(c(feature,missing))
+#     }
+# }
+
+#Imputting remanining values using KNNimputation
+library(DMwR)
+# 
+financialData_no_NA<-knnImputation(financialData)
+#View(financialData_no_NA)
+
+#Checking the number of missing values left
+sum(is.na(financialData_no_NA))
+dim(financialData_no_NA)
+
+#write.csv(financialData_no_NA, "financialData_no_NA_new.csv", row.names=F)
+
+```
+##Handling missing values for test dataset
+```{r}
+dim(dataToPredict)
+sum(is.na(dataToPredict))
+#There are total 5850 missing values
+
+sum(is.na(dataToPredict$Attr37))
+#As Attr37 has 2743 NA values, removing it
+dataToPredict$Attr37 = NULL
+
+#Checking the number of missing values left
+sum(is.na(dataToPredict))
+
+
+# #Checking feature-wise missing values 
+# for (feature in names(dataToPredict)) {
+#     missing <- sum(is.na(dataToPredict[,feature]))
+#     if (missing > 0) {
+#         print(c(feature,missing))
+#     }
+# }
+
+#Imputting remanining 3107 values using KNNimputation
+library(DMwR)
+# 
+dataToPredict_no_NA<-knnImputation(dataToPredict)
+#View(dataToPredict_no_NA)
+
+#Checking the number of missing values left
+sum(is.na(dataToPredict_no_NA))
+
+#write.csv(dataToPredict_no_NA, "dataToPredict_no_NA_new.csv", row.names=F)
+
+```
+##Scaling the data
+```{r}
+financialData_no_NA$target = as.factor(financialData_no_NA$target)
+row.names(financialData_no_NA)= financialData_no_NA$ID
+financialData_no_NA$ID = NULL
+
+library(vegan)
+
+financialData_no_NA_scaled =decostand( financialData_no_NA[,1:63], method = "range")
+#financialData_no_NA_scaled$ID = financialData_no_NA$ID
+financialData_no_NA_scaled$target = financialData_no_NA$target
+```
+
+
+## Splitting data for validation
+```{r}
+library(caret)
+set.seed(123)
+
+#using years_of_education column (trainData)
+train_rows <- caret::createDataPartition(financialData_no_NA_scaled$target, p = 0.7, list = F)
+financialData_no_NA_train <- financialData_no_NA_scaled[train_rows, ]
+financialData_unseenData <- financialData_no_NA_scaled[-train_rows, ]
+
+```
+
+
+## Training the model using Logistic Regression
+```{r}
+train = financialData_no_NA_train
+test = financialData_unseenData
+
+model_logReg <- glm(target~., data = train, family = binomial)  
+summary(model_logReg)
+```
+
+
+```{r}
+probTrain <- predict(model_logReg, type = "response")
+
+
+library(ROCR)
+pred <- prediction(probTrain, train$target) 
+
+perf <- performance(pred, measure="tpr", x.measure="fpr")
+plot(perf, col=rainbow(10), colorize=T, print.cutoffs.at=seq(0,1,0.05))
+```
+
+
+```{r}
+perf_auc <- performance(pred, measure="auc")
+auc <- perf_auc@y.values[[1]]
+print(auc)
+
+prob_test <- predict(model_logReg, test[,-64], type = "response")
+
+preds_test <- ifelse(prob_test > 0.8, "1", "0")
+
+preds_test<-data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test$target, positive = "1")
+
+```
+
+
+
+## Training the model using KNN
+```{r}
+#converting the target column to factor
+train$target = as.factor(train$target)
+test$target = as.factor(test$target)
+
+#creating levels as "YES" and "NO" for 1 and 0 respectively
+# library(plyr)
+levels(train$target) = list(NO="0",YES="1")
+levels(test$target) = list(NO="0",YES="1")
+
+model_knn <- knn3(target ~ . , train, k = 5)
+
+preds_k <- predict(model_knn, test[,-64])
+
+# * The predict function on the knn model returns probabilities for each of the two classes in the target variable, so we'll get to the class labels using the ifelse() function
+preds_knn <- ifelse(preds_k[, 1] > preds_k[, 2], 0, 1)
+preds_knn = as.factor(preds_knn)
+levels(preds_knn) = list(NO="0",YES="1")
+
+confusionMatrix(preds_knn, test$target, positive = "YES")
+
+# * Store the predictions on the train data
+
+preds_train_k <- predict(model_knn, train[,-64])
+
+preds_train_knn <- ifelse(preds_train_k[, 1] > preds_train_k[, 2], 0, 1)
+
+```
+
+
+## Training the model using Random Forest
+```{r }
+library(randomForest)
+
+row.names(financialData_no_NA)= financialData_no_NA$ID
+financialData_no_NA$ID = NULL
+
+trainID = row.names(train)
+testID = row.names(test)
+
+rownames(train) = c()
+rownames(test) = c()
+
+#Tune mtry 
+tuneRF(train, train$target, ntreeTry = 20, stepFactor = 1, improve = 0.05)
+
+#Plotting model
+model_rf <- randomForest(target ~ . , train,ntree = 20, mtry=8)
+
+#Tune OOB Vs number of trees
+plot(model_rf)
+
+ # We can also look at variable importance from the built model using the importance() function and visualise it using the varImpPlot() funcion
+importance(model_rf)
+
+varImpPlot(model_rf)
+
+ # Store predictions from the model
+preds_rf <- predict(model_rf, test)
+
+confusionMatrix(preds_rf, test$target)
+
+# Predict on the train data
+preds_train_rf <- predict(model_rf)
+
+```
+
+
+## SVM
+```{r}
+library(caret)
+sampling_strategy <- trainControl(method = "repeatedcv", number = 4, repeats = 10)
+
+SVM_linear_tune <- train(MV ~ . , 
+                         Boston_train, 
+                         method = "svmPoly", 
+                         tuneGrid = expand.grid(.C = 10^seq(-1, 1,.1), 
+                                               .scale = seq(0, 1, 0.25),
+                                               .degree = c(2, 3, 5)), 
+                         trControl = sampling_strategy, 
+                         set.seed(1234)
+)
+
+  SVM_linear_tune
+
+SVM_linear_tune$finalModel
+SVM_linear_tune$results
+
+pred_SVM_linear <- predict(SVM_linear_tune, 
+                           Boston_test)
+
+plot(Boston_test$MV)
+points(pred_SVM_linear, col="red")
+
+library(Metrics)
+rmse(Boston_test$MV, pred_SVM_linear)
+
+```
